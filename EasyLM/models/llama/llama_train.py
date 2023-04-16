@@ -205,7 +205,7 @@ def main(argv):
             return rng, loss_accum, grad_accum, metrics_accum
 
         # Initialize gradient accumulation loop state.
-        accum_dtype = jnp.float32
+        accum_dtype = jnp.bfloat16
         loss_accum_init = jnp.zeros((), accum_dtype)
         grad_accum_init = jax.tree_util.tree_map(
             lambda x: jnp.zeros(x.shape, accum_dtype),
