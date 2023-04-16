@@ -145,6 +145,7 @@ def main(argv):
         """
         batch_size = batch['tokens'].shape[0]
         microbatch_size = batch_size // num_microbatches
+        accum_dtype = jnp.bfloat16
 
         def loss_and_accuracy(params, batch, rng):
             tokens = batch['tokens']
@@ -197,6 +198,16 @@ def main(argv):
                 Optional[flax.core.FrozenDict]]:
             (rng, loss_accum, grad_accum, metrics_accum) = state
             loss, grad, metrics = calculate_grad(loop_cnt, rng)
+            
+            # convert to accum_dtype
+            loss = loss.astype(accum_dtype)
+            grad = jax.tree_util.tree_map(
+                lambda x: x.astype(accum_dtype), grad
+            )
+            metrics = jax.tree_util.tree_map(
+                lambda x: x.astype(accum_dtype), metrics
+            )
+
             loss_accum = loss_accum + loss
             metrics_accum = jax.tree_util.tree_map(
                 jnp.add, metrics_accum, metrics
@@ -205,7 +216,6 @@ def main(argv):
             return rng, loss_accum, grad_accum, metrics_accum
 
         # Initialize gradient accumulation loop state.
-        accum_dtype = jnp.bfloat16
         loss_accum_init = jnp.zeros((), accum_dtype)
         grad_accum_init = jax.tree_util.tree_map(
             lambda x: jnp.zeros(x.shape, accum_dtype),
