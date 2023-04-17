@@ -246,7 +246,7 @@ def main(argv):
         # Apply the gradients to the model.
         train_state = train_state.apply_gradients(grads=grad_accum)
         metrics = dict(
-            loss=loss_accum,
+            loss=loss_accum / num_microbatches,
             accuracy=metrics_accum['accuracy'] / num_microbatches,
             learning_rate=optimizer_info['learning_rate_schedule'](train_state.step),
             gradient_norm=global_norm(grad_accum),
