@@ -145,7 +145,7 @@ def main(argv):
         """
         batch_size = batch['tokens'].shape[0]
         microbatch_size = batch_size // num_microbatches
-        accum_dtype = jnp.bfloat16
+        accum_dtype = jnp.float32
 
         def loss_and_accuracy(params, batch, rng):
             tokens = batch['tokens']
