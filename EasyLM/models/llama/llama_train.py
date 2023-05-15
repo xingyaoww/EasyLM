@@ -16,6 +16,12 @@ from flax import linen as nn
 from flax.jax_utils import prefetch_to_device
 from flax.training.train_state import TrainState
 import optax
+from typing import Any, Mapping, Text, Tuple, Union, NamedTuple, Optional
+
+from jax_smi import initialise_tracking
+from jax.experimental.compilation_cache import compilation_cache as cc
+initialise_tracking()
+cc.initialize_cache("/tmp/jax_cache")
 
 from EasyLM.data import DatasetFactory
 from EasyLM.checkpoint import StreamingCheckpointer
@@ -33,6 +39,7 @@ from EasyLM.models.llama.llama_model import (
 
 FLAGS, FLAGS_DEF = mlxu.define_flags_with_default(
     seed=42,
+    num_microbatches=1,
     initialize_jax_distributed=False,
     mp_mesh_dim='-1,1',
     fsdp=False,
@@ -117,31 +124,136 @@ def main(argv):
         )
         return TrainState.create(params=params, tx=optimizer, apply_fn=None)
 
-    def train_step(train_state, rng, batch):
-        rng_generator = JaxRNG(rng)
-        tokens = with_sharding_constraint(batch['tokens'], PS('dp'))
-        loss_masks = with_sharding_constraint(batch['loss_masks'], PS('dp'))
-        def loss_and_accuracy(params):
+    def train_step_microbatched(
+        train_state, rng, batch,
+        num_microbatches: int = 1,
+    ):
+        """Implements optional microbatched gradient accumulation.
+
+        Args:
+        loss_fn: The loss function that takes in (train_state.params, batch, dropout_rng).
+        train_state: A train state with model parameters and optimizer state.
+        batch: A batch of data.
+        dropout_rng: jax PRNGKey for dropout.
+        num_microbatches: the number of microbatches to use, or None for direct
+            training.
+        data_partition_spec: the PartitionSpec to use for partitioning annotations
+            on the batch.
+
+        Returns:
+        Accumulated gradients and incremental metrics.
+        """
+        batch_size = batch['tokens'].shape[0]
+        microbatch_size = batch_size // num_microbatches
+        accum_dtype = jnp.bfloat16
+
+        def loss_and_accuracy(params, batch, rng):
+            tokens = batch['tokens']
+            loss_masks = batch['loss_masks']
             bos_tokens = jnp.full(
                 (tokens.shape[0], 1), llama_config.bos_token_id, dtype=jnp.int32
             )
             inputs = jnp.concatenate([bos_tokens, tokens[:, :-1]], axis=1)
             logits = model.apply(
                 params, inputs, deterministic=False,
-                rngs=rng_generator(llama_config.rng_keys()),
+                rngs=rng,
             ).logits
-            return cross_entropy_loss_and_accuracy(logits, tokens, loss_masks)
+            loss, accuracy = cross_entropy_loss_and_accuracy(logits, tokens, loss_masks)
+            return loss, {'accuracy': accuracy}
+
         grad_fn = jax.value_and_grad(loss_and_accuracy, has_aux=True)
-        (loss, accuracy), grads = grad_fn(train_state.params)
-        train_state = train_state.apply_gradients(grads=grads)
+
+        def get_microbatch(batch: dict, idx: int) -> Mapping[str, jnp.ndarray]:
+            """Fetch microbatch slice from possibly-packed input data."""
+            offset = idx * microbatch_size
+            length = microbatch_size
+            starts = {k: [offset] + [0] * (b.ndim - 1)
+                    for k, b in batch.items()}
+            limits = {k: [length] + list(b.shape[1:])
+                    for k, b in batch.items()}
+            return {
+                k: jax.lax.dynamic_slice(b, starts[k], limits[k])
+                for k, b in batch.items()
+            }
+
+        def calculate_grad(loop_cnt, rng):
+            mbatch = get_microbatch(batch, loop_cnt)
+            # We need to annotate the microbatch sharding as we would a batch.
+            mbatch = jax.tree_util.tree_map(
+                lambda x: with_sharding_constraint(x, PS('dp')),
+                mbatch
+            )
+            (loss, metrics), grad = grad_fn(
+                train_state.params,
+                mbatch,
+                rng,
+            )
+            return loss, grad, metrics
+
+        def per_microbatch_train_step(
+            loop_cnt: int, state: Tuple[jnp.ndarray, jnp.ndarray,
+                                        Mapping[str, jnp.ndarray],
+                                        Optional[flax.core.FrozenDict]]
+        ) -> Tuple[jnp.ndarray, jnp.ndarray, Mapping[str, jnp.ndarray],
+                Optional[flax.core.FrozenDict]]:
+            (rng, loss_accum, grad_accum, metrics_accum) = state
+            loss, grad, metrics = calculate_grad(loop_cnt, rng)
+            
+            # convert to accum_dtype
+            loss = loss.astype(accum_dtype)
+            grad = jax.tree_util.tree_map(
+                lambda x: x.astype(accum_dtype), grad
+            )
+            metrics = jax.tree_util.tree_map(
+                lambda x: x.astype(accum_dtype), metrics
+            )
+
+            loss_accum = loss_accum + loss
+            metrics_accum = jax.tree_util.tree_map(
+                jnp.add, metrics_accum, metrics
+            )
+            grad_accum = jax.tree_util.tree_map(jnp.add, grad_accum, grad)
+            return rng, loss_accum, grad_accum, metrics_accum
+
+        # Initialize gradient accumulation loop state.
+        loss_accum_init = jnp.zeros((), accum_dtype)
+        grad_accum_init = jax.tree_util.tree_map(
+            lambda x: jnp.zeros(x.shape, accum_dtype),
+            train_state.params
+        )
+
+        rng_generator = JaxRNG(rng)
+        input_rng = rng_generator(llama_config.rng_keys())
+        _, _, initial_metrics_shape = jax.eval_shape(
+            calculate_grad, loop_cnt=0,
+            rng=input_rng
+        )
+
+        metrics_accum_init = {
+            k: jnp.zeros((), accum_dtype)
+            for k in initial_metrics_shape
+        }
+        loop_init = (
+            input_rng, # same rng for all microbatches
+            loss_accum_init,
+            grad_accum_init,
+            metrics_accum_init
+        )
+        _, loss_accum, grad_accum, metrics_accum = jax.lax.fori_loop(
+            0, num_microbatches, per_microbatch_train_step, loop_init
+        )
+
+        # Apply the gradients to the model.
+        train_state = train_state.apply_gradients(grads=grad_accum)
         metrics = dict(
-            loss=loss,
-            accuracy=accuracy,
+            loss=loss_accum / num_microbatches,
+            accuracy=metrics_accum['accuracy'] / num_microbatches,
             learning_rate=optimizer_info['learning_rate_schedule'](train_state.step),
-            gradient_norm=global_norm(grads),
+            gradient_norm=global_norm(grad_accum),
             param_norm=global_norm(train_state.params),
         )
-        return train_state, rng_generator(), metrics
+        new_rng = rng_generator()
+        return train_state, new_rng, metrics
 
     def eval_step(train_state, rng, batch):
         rng_generator = JaxRNG(rng)
@@ -188,8 +300,9 @@ def main(argv):
         donate_argnums=(0, ),
     )
 
+    print(f"Number of microbatches: {FLAGS.num_microbatches}")
     sharded_train_step = pjit(
-        train_step,
+        partial(train_step_microbatched, num_microbatches=FLAGS.num_microbatches),
         in_shardings=(train_state_partition, PS(), PS()),
         out_shardings=(train_state_partition, PS(), PS()),
         donate_argnums=(0, 1),
