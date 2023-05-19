@@ -6,6 +6,7 @@ import numpy as np
 import mlxu
 
 import jax
+import flax
 import jax.numpy as jnp
 from jax.experimental.pjit import pjit
 from jax.sharding import PartitionSpec as PS
@@ -347,9 +348,13 @@ def main(argv):
 
         sharded_rng = next_rng()
 
-        step_counter = trange(start_step, FLAGS.total_steps, ncols=0)
+        step_counter = trange(0, FLAGS.total_steps, ncols=0)
 
         for step, (batch, dataset_metrics) in zip(step_counter, dataset):
+            # Skip steps until start_step
+            if step < start_step:
+                continue
+
             train_state, sharded_rng, metrics = sharded_train_step(
                 train_state, sharded_rng, batch
             )
