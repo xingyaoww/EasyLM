@@ -12,7 +12,7 @@ from ml_collections import ConfigDict
 from tqdm import tqdm, trange
 import numpy as np
 
-from datasets import load_dataset
+from datasets import load_dataset, load_from_disk
 
 
 class DatasetFactory(object):
@@ -134,6 +134,7 @@ class HuggingfaceDataset(object):
         config.seq_length = 1024
         config.batch_size = 8
         config.always_start_with_bos = False
+        config.load_from_disk = False
 
         if updates is not None:
             config.update(ConfigDict(updates).copy_and_resolve_references())
@@ -145,9 +146,13 @@ class HuggingfaceDataset(object):
         split = self.config.split if self.config.split != '' else None
         self._tokenizer = tokenizer
         self._text_processor = text_processor
-        self._dataset = load_dataset(
-            self.config.path, name, split=split, streaming=self.config.streaming
-        )
+
+        if self.config.load_from_disk:
+            self._dataset = load_from_disk(self.config.path)
+        else:
+            self._dataset = load_dataset(
+                self.config.path, name, split=split, streaming=self.config.streaming
+            )
 
     def __iter__(self):
         chunk_size = self.config.batch_size * self.config.seq_length
