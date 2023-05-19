@@ -188,11 +188,11 @@ class HuggingfaceDataset(object):
                     loss_mask_buffer = loss_mask_buffer[chunk_size:]
 
     def __getstate__(self):
-        return self.config, self.tokenizer
+        return self.config, self.tokenizer, self.text_processor
 
     def __setstate__(self, state):
-        config, tokenizer = state
-        self.__init__(config, tokenizer)
+        config, tokenizer, text_processor = state
+        self.__init__(config, tokenizer, text_processor)
 
     @property
     def seq_length(self):
