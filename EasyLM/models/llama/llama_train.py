@@ -310,6 +310,10 @@ def main(argv):
     )
 
     def save_checkpoint(train_state, milestone=False):
+        # only save when process_index == 0
+        if jax.process_index() != 0:
+            return
+
         step = int(jax.device_get(train_state.step))
         metadata = dict(
             step=step,
