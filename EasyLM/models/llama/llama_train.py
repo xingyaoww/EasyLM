@@ -140,22 +140,21 @@ def main(argv):
         Returns:
         Accumulated gradients and incremental metrics.
         """
-        batch_size = batch['tokens'].shape[0]
+        batch_size = batch['input_tokens'].shape[0]
         microbatch_size = batch_size // num_microbatches
         accum_dtype = jnp.float32
 
         def loss_and_accuracy(params, batch, rng):
-            tokens = batch['tokens']
-            loss_masks = batch['loss_masks']
-            bos_tokens = jnp.full(
-                (tokens.shape[0], 1), llama_config.bos_token_id, dtype=jnp.int32
+            batch = with_sharding_constraint(
+                batch, PS(('dp', 'fsdp'))
             )
-            inputs = jnp.concatenate([bos_tokens, tokens[:, :-1]], axis=1)
             logits = model.apply(
-                params, inputs, deterministic=False,
+                params, batch['input_tokens'], deterministic=False,
                 rngs=rng,
             ).logits
-            loss, accuracy = cross_entropy_loss_and_accuracy(logits, tokens, loss_masks)
+            loss, accuracy = cross_entropy_loss_and_accuracy(
+                logits, batch['target_tokens'], batch['loss_masks']
+            )
             return loss, {'accuracy': accuracy}
 
         grad_fn = jax.value_and_grad(loss_and_accuracy, has_aux=True)
