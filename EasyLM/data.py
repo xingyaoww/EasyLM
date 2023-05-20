@@ -193,6 +193,21 @@ class HuggingfaceDataset(object):
     def __setstate__(self, state):
         config, tokenizer, text_processor = state
         self.__init__(config, tokenizer, text_processor)
+    
+    def get_state_dict(self):
+        return dict(
+            config=self.config,
+            tokenizer=self.tokenizer,
+            text_processor=self.text_processor,
+        )
+
+    def load_state_dict(self, state_dict):
+        if 'config' in state_dict:
+            self.config.update(ConfigDict(state_dict['config']))
+        if 'tokenizer' in state_dict:
+            self._tokenizer = state_dict['tokenizer']
+        if 'text_processor' in state_dict:
+            self._text_processor = state_dict['text_processor']
 
     @property
     def seq_length(self):
