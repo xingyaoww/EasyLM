@@ -135,6 +135,7 @@ class HuggingfaceDataset(object):
         config.batch_size = 8
         config.always_start_with_bos = False
         config.load_from_disk = False
+        config.n_epochs = 1
 
         if updates is not None:
             config.update(ConfigDict(updates).copy_and_resolve_references())
@@ -157,7 +158,9 @@ class HuggingfaceDataset(object):
     def __iter__(self):
         chunk_size = self.config.batch_size * self.config.seq_length
         total_tokens = 0
-        while True:
+        
+        epoch = 0
+        while epoch < self.config.n_epochs:
             token_buffer = []
             loss_mask_buffer = []
             for index, example in enumerate(self._dataset):
@@ -186,13 +189,7 @@ class HuggingfaceDataset(object):
                     yield batch, metrics
                     token_buffer = token_buffer[chunk_size:]
                     loss_mask_buffer = loss_mask_buffer[chunk_size:]
-
-    def __getstate__(self):
-        return self.config, self.tokenizer, self.text_processor
-
-    def __setstate__(self, state):
-        config, tokenizer, text_processor = state
-        self.__init__(config, tokenizer, text_processor)
+            epoch += 1
     
     def get_state_dict(self):
         return dict(
