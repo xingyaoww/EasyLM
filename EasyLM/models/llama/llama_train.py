@@ -2,8 +2,11 @@ import pprint
 from functools import partial
 
 from tqdm import tqdm, trange
+import re
 import numpy as np
 import mlxu
+import subprocess
+
 
 import jax
 import flax
@@ -325,13 +328,34 @@ def main(argv):
             milestone=milestone,
         )
 
+    def get_latest_checkpoint():
+        path_prefix = f"{logger.output_dir}/streaming_train_state"
+        cmd = f"gcloud storage ls {path_prefix}*"
+        output = subprocess.check_output(cmd.split())
+        output = output.decode('utf-8')
+        checkpoints = re.findall(r'streaming_train_state_(\d+)', output)
+        if len(checkpoints) == 0:
+            return None
+        checkpoints = sorted([int(x) for x in checkpoints])
+        print(f"Found {len(checkpoints)} existing checkpoints: {checkpoints}")
+        return path_prefix + "_" + str(max(checkpoints))
+
+
     mesh = LLaMAConfig.get_jax_mesh(FLAGS.mesh_dim)
     with mesh:
         train_state, restored_params = None, None
+
         if FLAGS.load_checkpoint != '':
             train_state, restored_params = checkpointer.load_trainstate_checkpoint(
                 FLAGS.load_checkpoint, train_state_shapes, shard_fns
             )
+        else:
+            latest_checkpoint = get_latest_checkpoint()
+            if latest_checkpoint is not None:
+                print(f"Loading latest checkpoint: {latest_checkpoint}")
+                train_state, restored_params = checkpointer.load_trainstate_checkpoint(
+                    latest_checkpoint, train_state_shapes, shard_fns
+                )
 
         if train_state is None and restored_params is None:
             # Initialize from scratch
