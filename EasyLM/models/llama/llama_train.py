@@ -284,6 +284,24 @@ def main(argv):
         enable=jax.process_index() == 0,
     )
 
+    def get_latest_checkpoint():
+        path_prefix = f"{logger.output_dir}/streaming_train_state"
+        cmd = f"gcloud storage ls {path_prefix}*"
+        output = subprocess.check_output(cmd.split())
+        output = output.decode('utf-8')
+        checkpoints = re.findall(r'streaming_train_state_(\d+)', output)
+        if len(checkpoints) == 0:
+            return None
+        checkpoints = sorted([int(x) for x in checkpoints])
+        print(f"Found {len(checkpoints)} existing checkpoints: {checkpoints}")
+        return path_prefix + "_" + str(max(checkpoints))
+
+    latest_checkpoint = get_latest_checkpoint()
+    print(f"Latest checkpoint found: {latest_checkpoint}; It will overwrite the input FLAGS.load_checkpoint argument.")
+    import pdb; pdb.set_trace()
+    if latest_checkpoint is not None:
+        FLAGS.load_checkpoint = latest_checkpoint
+
     sharded_init_fn = pjit(
         init_fn,
         in_shardings=PS(),
@@ -328,19 +346,6 @@ def main(argv):
             milestone=milestone,
         )
 
-    def get_latest_checkpoint():
-        path_prefix = f"{logger.output_dir}/streaming_train_state"
-        cmd = f"gcloud storage ls {path_prefix}*"
-        output = subprocess.check_output(cmd.split())
-        output = output.decode('utf-8')
-        checkpoints = re.findall(r'streaming_train_state_(\d+)', output)
-        if len(checkpoints) == 0:
-            return None
-        checkpoints = sorted([int(x) for x in checkpoints])
-        print(f"Found {len(checkpoints)} existing checkpoints: {checkpoints}")
-        return path_prefix + "_" + str(max(checkpoints))
-
-
     mesh = LLaMAConfig.get_jax_mesh(FLAGS.mesh_dim)
     with mesh:
         train_state, restored_params = None, None
@@ -349,13 +354,6 @@ def main(argv):
             train_state, restored_params = checkpointer.load_trainstate_checkpoint(
                 FLAGS.load_checkpoint, train_state_shapes, shard_fns
             )
-        else:
-            latest_checkpoint = get_latest_checkpoint()
-            if latest_checkpoint is not None:
-                print(f"Loading latest checkpoint: {latest_checkpoint}")
-                train_state, restored_params = checkpointer.load_trainstate_checkpoint(
-                    latest_checkpoint, train_state_shapes, shard_fns
-                )
 
         if train_state is None and restored_params is None:
             # Initialize from scratch
