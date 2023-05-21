@@ -298,7 +298,6 @@ def main(argv):
 
     latest_checkpoint = get_latest_checkpoint()
     print(f"Latest checkpoint found: {latest_checkpoint}; It will overwrite the input FLAGS.load_checkpoint argument.")
-    import pdb; pdb.set_trace()
     if latest_checkpoint is not None:
         FLAGS.load_checkpoint = latest_checkpoint
 
