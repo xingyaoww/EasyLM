@@ -297,6 +297,7 @@ def main(argv):
         return path_prefix + "_" + str(max(checkpoints))
 
     latest_checkpoint = get_latest_checkpoint()
+    latest_checkpoint = "trainstate::" + latest_checkpoint
     print(f"Latest checkpoint found: {latest_checkpoint}; It will overwrite the input FLAGS.load_checkpoint argument.")
     if latest_checkpoint is not None:
         FLAGS.load_checkpoint = latest_checkpoint
