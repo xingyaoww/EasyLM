@@ -26,8 +26,9 @@ FLAGS, FLAGS_DEF = mlxu.define_flags_with_default(
     initialize_jax_distributed=False,
     mesh_dim='1,-1,1',
     dtype='bf16',
-    input_length=1024,
+    # input_length=1024,
     seq_length=2048,
+    pad_to_multiple_of=256,
     top_k=50,
     top_p=1.0,
     do_sample=True,
@@ -112,6 +113,7 @@ def main(argv):
     def forward_generate(params, rng, batch, temperature):
         batch = with_sharding_constraint(batch, PS(('dp', 'fsdp')))
         rng_generator = JaxRNG(rng)
+        input_length = batch['input_tokens'].shape[1]
         output = hf_model.generate(
             batch['input_tokens'],
             attention_mask=batch['attention_mask'],
@@ -121,7 +123,7 @@ def main(argv):
                 [FlaxTemperatureLogitsWarper(temperature)]
             ),
             generation_config=GenerationConfig(
-                max_new_tokens=FLAGS.seq_length - FLAGS.input_length,
+                max_new_tokens=FLAGS.seq_length - input_length,
                 pad_token_id=tokenizer.eos_token_id,
                 bos_token_id=tokenizer.bos_token_id,
                 eos_token_id=tokenizer.eos_token_id,
@@ -141,13 +143,14 @@ def main(argv):
     def forward_greedy_generate(params, rng, batch):
         batch = with_sharding_constraint(batch, PS(('dp', 'fsdp')))
         rng_generator = JaxRNG(rng)
+        input_length = batch['input_tokens'].shape[1]
         output = hf_model.generate(
             batch['input_tokens'],
             attention_mask=batch['attention_mask'],
             params=params['params'],
             prng_key=rng_generator(),
             generation_config=GenerationConfig(
-                max_new_tokens=FLAGS.seq_length - FLAGS.input_length,
+                max_new_tokens=FLAGS.seq_length - input_length,
                 pad_token_id=tokenizer.eos_token_id,
                 bos_token_id=tokenizer.bos_token_id,
                 eos_token_id=tokenizer.eos_token_id,
@@ -169,17 +172,20 @@ def main(argv):
             nonlocal sharded_rng
             prefix = prefix_tokenizer(
                 prefix_text,
-                padding='max_length',
-                truncation=True,
-                max_length=FLAGS.input_length,
+                # padding='max_length',
+                # truncation=True,
+                # max_length=FLAGS.input_length,
                 return_tensors='np',
+                pad_to_multiple_of=FLAGS.pad_to_multiple_of,
             )
+            input_length = prefix.input_ids.shape[1]
             inputs = tokenizer(
                 text,
-                padding='max_length',
-                truncation=True,
-                max_length=FLAGS.seq_length - FLAGS.input_length,
+                # padding='max_length',
+                # truncation=True,
+                # max_length=FLAGS.seq_length - input_length,
                 return_tensors='np',
+                pad_to_multiple_of=FLAGS.pad_to_multiple_of,
             )
             output_tokens = np.concatenate([prefix.input_ids, inputs.input_ids], axis=1)
             bos_tokens = np.full(
@@ -216,10 +222,11 @@ def main(argv):
             nonlocal sharded_rng
             inputs = tokenizer(
                 text,
-                padding='longest',
-                truncation=False,
-                max_length=np.iinfo(np.int32).max,
+                # padding='longest',
+                # truncation=False,
+                # max_length=np.iinfo(np.int32).max,
                 return_tensors='np',
+                pad_to_multiple_of=FLAGS.pad_to_multiple_of,
             )
             batch_size = inputs.input_ids.shape[0]
             output_tokens = inputs.input_ids
@@ -284,10 +291,11 @@ def main(argv):
             nonlocal sharded_rng
             inputs = prefix_tokenizer(
                 text,
-                padding='max_length',
-                truncation=True,
-                max_length=FLAGS.input_length,
+                # padding='max_length',
+                # truncation=True,
+                # max_length=FLAGS.input_length,
                 return_tensors='np',
+                pad_to_multiple_of=FLAGS.pad_to_multiple_of,
             )
             input_tokens = inputs.input_ids
             input_mask = inputs.attention_mask
@@ -324,29 +332,31 @@ def main(argv):
                 while total_length < max_length:
                     pf_tokens = tokenizer(
                         pf,
-                        padding=False,
-                        truncation=False,
-                        max_length=np.iinfo(np.int32).max,
+                        # padding=False,
+                        # truncation=False,
+                        # max_length=np.iinfo(np.int32).max,
                         return_tensors='np',
+                        pad_to_multiple_of=FLAGS.pad_to_multiple_of,
                     )
                     input_tokens = pf_tokens.input_ids
                     attention_mask = pf_tokens.attention_mask
 
-                    if input_tokens.shape[1] < FLAGS.input_length:
-                        extra = FLAGS.input_length - input_tokens.shape[1]
-                        pad_tokens = np.full(
-                            (1, extra), tokenizer.pad_token_id, dtype=np.int32
-                        )
-                        input_tokens = np.concatenate(
-                            [pad_tokens, input_tokens], axis=1
-                        )
-                        pad_attention = np.zeros((1, extra), dtype=attention_mask.dtype)
-                        attention_mask = np.concatenate(
-                            [pad_attention, attention_mask], axis=1
-                        )
-                    elif input_tokens.shape[1] > FLAGS.input_length:
-                        input_tokens = input_tokens[:, -FLAGS.input_length:]
-                        attention_mask = attention_mask[:, -FLAGS.input_length:]
+                    # This is pad or truncate to input_length, we don't want that
+                    # if input_tokens.shape[1] < FLAGS.input_length:
+                    #     extra = FLAGS.input_length - input_tokens.shape[1]
+                    #     pad_tokens = np.full(
+                    #         (1, extra), tokenizer.pad_token_id, dtype=np.int32
+                    #     )
+                    #     input_tokens = np.concatenate(
+                    #         [pad_tokens, input_tokens], axis=1
+                    #     )
+                    #     pad_attention = np.zeros((1, extra), dtype=attention_mask.dtype)
+                    #     attention_mask = np.concatenate(
+                    #         [pad_attention, attention_mask], axis=1
+                    #     )
+                    # elif input_tokens.shape[1] > FLAGS.input_length:
+                    #     input_tokens = input_tokens[:, -FLAGS.input_length:]
+                    #     attention_mask = attention_mask[:, -FLAGS.input_length:]
 
                     if FLAGS.add_bos_token:
                         input_tokens[:, 0] = tokenizer.bos_token_id
