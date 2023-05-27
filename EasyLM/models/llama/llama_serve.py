@@ -181,9 +181,10 @@ def main(argv):
             input_length = prefix.input_ids.shape[1]
             inputs = tokenizer(
                 text,
-                # padding='max_length',
-                # truncation=True,
-                # max_length=FLAGS.seq_length - input_length,
+                padding='max_length',
+                truncation=True,
+                max_length=FLAGS.seq_length - input_length,
+                # pad the entire sequence to max_length for likeihood calculation
                 return_tensors='np',
                 pad_to_multiple_of=FLAGS.pad_to_multiple_of,
             )
