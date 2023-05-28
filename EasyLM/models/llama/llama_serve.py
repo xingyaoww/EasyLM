@@ -27,6 +27,7 @@ FLAGS, FLAGS_DEF = mlxu.define_flags_with_default(
     mesh_dim='1,-1,1',
     dtype='bf16',
     # input_length=1024,
+    max_input_length=2048-128,
     seq_length=2048,
     pad_to_multiple_of=256,
     top_k=50,
@@ -173,8 +174,8 @@ def main(argv):
             prefix = prefix_tokenizer(
                 prefix_text,
                 # padding='max_length',
-                # truncation=True,
-                # max_length=FLAGS.input_length,
+                truncation=True,
+                max_length=FLAGS.max_input_length,
                 return_tensors='np',
                 # pad_to_multiple_of=FLAGS.pad_to_multiple_of,
             )
