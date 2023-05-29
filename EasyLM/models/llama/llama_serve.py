@@ -20,6 +20,10 @@ from EasyLM.jax_utils import (
 )
 from EasyLM.models.llama.llama_model import LLaMAConfig, FlaxLLaMAForCausalLM
 
+from jax_smi import initialise_tracking
+initialise_tracking()
+from jax.experimental.compilation_cache import compilation_cache as cc
+cc.initialize_cache("/tmp/jax_cache")
 
 FLAGS, FLAGS_DEF = mlxu.define_flags_with_default(
     seed=42,
@@ -388,7 +392,6 @@ def main(argv):
                 all_outputs.append(total_generated)
 
             return all_outputs
-
 
     server = ModelServer(FLAGS.lm_server)
     server.run()
