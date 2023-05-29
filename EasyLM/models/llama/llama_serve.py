@@ -177,7 +177,7 @@ def main(argv):
             nonlocal sharded_rng
             prefix = prefix_tokenizer(
                 prefix_text,
-                # padding='max_length',
+                padding=True, # longest
                 truncation=True,
                 max_length=FLAGS.max_input_length,
                 return_tensors='np',
@@ -228,7 +228,7 @@ def main(argv):
             nonlocal sharded_rng
             inputs = tokenizer(
                 text,
-                # padding='longest',
+                padding=True,
                 # truncation=False,
                 # max_length=np.iinfo(np.int32).max,
                 return_tensors='np',
@@ -297,7 +297,7 @@ def main(argv):
             nonlocal sharded_rng
             inputs = prefix_tokenizer(
                 text,
-                # padding='max_length',
+                padding=True,
                 # truncation=True,
                 # max_length=FLAGS.input_length,
                 return_tensors='np',
