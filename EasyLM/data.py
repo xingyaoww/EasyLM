@@ -155,47 +155,70 @@ class HuggingfaceDataset(object):
                 self.config.path, name, split=split, streaming=self.config.streaming
             )
 
+        # The existing code here
+        self.state = {
+            'dataset_index': 0,
+            'batch_index': 0,
+            'token_buffer': [],
+            'loss_mask_buffer': [],
+        }
+
     def __iter__(self):
         chunk_size = self.config.batch_size * self.config.seq_length
         total_tokens = 0
-        
         epoch = 0
+        start_index = self.state['dataset_index']
         while epoch < self.config.n_epochs:
-            token_buffer = []
-            loss_mask_buffer = []
-            for index, example in enumerate(self._dataset):
-                tokens, loss_masks = self.text_processor(example)
-                token_buffer.extend(tokens)
-                loss_mask_buffer.extend(loss_masks)
-                while len(token_buffer) > chunk_size + 1:
+            for index in range(start_index, len(self._dataset)):
+
+                if self.state['batch_index'] == 0:
+                    example = self._dataset[index]
+                    tokens, loss_masks = self.text_processor(example)
+                    self.state['token_buffer'].extend(tokens)
+                    self.state['loss_mask_buffer'].extend(loss_masks)
+
+                while len(self.state['token_buffer']) > chunk_size + 1:
                     total_tokens += chunk_size
                     metrics = {
                         'dataset_example_index': index,
                         'dataset_total_tokens': total_tokens,
                     }
                     batch = {
-                        'input_tokens': np.array(token_buffer[:chunk_size], dtype=np.int32).reshape(
+                        'input_tokens': np.array(self.state['token_buffer'][:chunk_size], dtype=np.int32).reshape(
                             self.config.batch_size, -1
                         ),
-                        'target_tokens': np.array(token_buffer[1:chunk_size + 1], dtype=np.int32).reshape(
+                        'target_tokens': np.array(self.state['token_buffer'][1:chunk_size + 1], dtype=np.int32).reshape(
                             self.config.batch_size, -1
                         ),
-                        'loss_masks': np.array(loss_mask_buffer[1:chunk_size + 1], dtype=np.float32).reshape(
+                        'loss_masks': np.array(self.state['loss_mask_buffer'][1:chunk_size + 1], dtype=np.float32).reshape(
                             self.config.batch_size, -1
                         ),
                     }
                     if self.config.always_start_with_bos:
                         batch['input_tokens'][:, 0] = self.tokenizer.bos_token_id
+                    
+                    # update state
+                    self.state['batch_index'] += 1
+
                     yield batch, metrics
-                    token_buffer = token_buffer[chunk_size:]
-                    loss_mask_buffer = loss_mask_buffer[chunk_size:]
+                    
+                    # reset state
+                    self.state['token_buffer'] = self.state['token_buffer'][chunk_size:]
+                    self.state['loss_mask_buffer'] = self.state['loss_mask_buffer'][chunk_size:]
+                
+                # Done with this dataset example
+                self.state['batch_index'] = 0
+                self.state['dataset_index'] += 1
+
             epoch += 1
-    
+
+
     def get_state_dict(self):
         return dict(
             config=self.config,
             tokenizer=self.tokenizer,
             text_processor=self.text_processor,
+            dataset_state=self.state,
         )
 
     def load_state_dict(self, state_dict):
@@ -205,6 +228,13 @@ class HuggingfaceDataset(object):
             self._tokenizer = state_dict['tokenizer']
         if 'text_processor' in state_dict:
             self._text_processor = state_dict['text_processor']
+        if 'dataset_state' in state_dict:
+            self.state.update(state_dict['dataset_state'])
+            print(
+                f'Resuming dataset from  '
+                f'dataset index {self.state["dataset_index"]},' 
+                f'batch index {self.state["batch_index"]}'
+            )
 
     @property
     def seq_length(self):
