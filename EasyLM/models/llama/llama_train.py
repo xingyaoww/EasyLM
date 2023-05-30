@@ -75,6 +75,41 @@ def main(argv):
     )
     set_random_seed(FLAGS.seed)
 
+
+    # Decide whether to load the latest checkpoint and/or dataset state
+    def get_latest_checkpoint():
+        # Detect Checkpoint
+        path_prefix = f"{logger.output_dir}/streaming_train_state"
+        output = subprocess.check_output(
+            f"gcloud storage ls {path_prefix}*".split()
+        ).decode('utf-8')
+        checkpoints = re.findall(r'streaming_train_state_(\d+)', output)
+        if len(checkpoints) == 0:
+            return None, None
+        checkpoints = sorted([int(x) for x in checkpoints])
+        print(f"Found {len(checkpoints)} existing checkpoints: {checkpoints}")
+        latest_checkpoint_step = max(checkpoints)
+        checkpoint_path = f"{path_prefix}_{latest_checkpoint_step}"
+
+        # Detect Dataset State
+        dataset_path_pkl = f"{logger.output_dir}/dataset_{latest_checkpoint_step}.pkl"
+        output = subprocess.check_output(
+            f"gcloud storage ls {dataset_path_pkl}".split()
+        ).decode('utf-8')
+        dataset_path = '' if len(output) == 0 else dataset_path_pkl
+
+        return checkpoint_path, dataset_path
+
+    latest_checkpoint, latest_dataset_state_path = get_latest_checkpoint()
+    latest_checkpoint = "trainstate::" + latest_checkpoint
+    if latest_checkpoint is not None:
+        FLAGS.load_checkpoint = latest_checkpoint
+        print(f"Latest checkpoint found: {latest_checkpoint}; It will overwrite the input FLAGS.load_checkpoint argument.")
+    
+    if latest_dataset_state_path is not None and latest_dataset_state_path != '':
+        FLAGS.load_dataset_state = latest_dataset_state_path
+        print(f"Latest dataset state found: {latest_dataset_state_path}; It will overwrite the input FLAGS.load_dataset_state argument.")
+
     tokenizer = LLaMAConfig.get_tokenizer(FLAGS.tokenizer)
     dataset = DatasetFactory.load_dataset(FLAGS.train_dataset, tokenizer)
     if FLAGS.load_dataset_state != '':
@@ -283,24 +318,6 @@ def main(argv):
         FLAGS.checkpointer, logger.output_dir,
         enable=jax.process_index() == 0,
     )
-
-    def get_latest_checkpoint():
-        path_prefix = f"{logger.output_dir}/streaming_train_state"
-        cmd = f"gcloud storage ls {path_prefix}*"
-        output = subprocess.check_output(cmd.split())
-        output = output.decode('utf-8')
-        checkpoints = re.findall(r'streaming_train_state_(\d+)', output)
-        if len(checkpoints) == 0:
-            return None
-        checkpoints = sorted([int(x) for x in checkpoints])
-        print(f"Found {len(checkpoints)} existing checkpoints: {checkpoints}")
-        return path_prefix + "_" + str(max(checkpoints))
-
-    latest_checkpoint = get_latest_checkpoint()
-    latest_checkpoint = "trainstate::" + latest_checkpoint
-    print(f"Latest checkpoint found: {latest_checkpoint}; It will overwrite the input FLAGS.load_checkpoint argument.")
-    if latest_checkpoint is not None:
-        FLAGS.load_checkpoint = latest_checkpoint
 
     sharded_init_fn = pjit(
         init_fn,
