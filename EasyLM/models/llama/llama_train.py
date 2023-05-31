@@ -108,8 +108,8 @@ def main(argv):
         return checkpoint_path, dataset_path
 
     latest_checkpoint, latest_dataset_state_path = get_latest_checkpoint()
-    latest_checkpoint = "trainstate::" + latest_checkpoint
     if latest_checkpoint is not None:
+        latest_checkpoint = "trainstate::" + latest_checkpoint
         FLAGS.load_checkpoint = latest_checkpoint
         print(f"Latest checkpoint found: {latest_checkpoint}; It will overwrite the input FLAGS.load_checkpoint argument.")
     
