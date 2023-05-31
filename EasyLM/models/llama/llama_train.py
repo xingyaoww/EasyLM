@@ -80,9 +80,14 @@ def main(argv):
     def get_latest_checkpoint():
         # Detect Checkpoint
         path_prefix = f"{logger.output_dir}/streaming_train_state"
-        output = subprocess.check_output(
-            f"gcloud storage ls {path_prefix}*".split()
-        ).decode('utf-8')
+        try:
+            output = subprocess.check_output(
+                f"gcloud storage ls {path_prefix}*".split()
+            ).decode('utf-8')
+        except subprocess.CalledProcessError:
+            # when no checkpoint found
+            return None, None
+
         checkpoints = re.findall(r'streaming_train_state_(\d+)', output)
         if len(checkpoints) == 0:
             return None, None
@@ -93,11 +98,13 @@ def main(argv):
 
         # Detect Dataset State
         dataset_path_pkl = f"{logger.output_dir}/dataset_{latest_checkpoint_step}.pkl"
-        output = subprocess.check_output(
-            f"gcloud storage ls {dataset_path_pkl}".split()
-        ).decode('utf-8')
-        dataset_path = '' if len(output) == 0 else dataset_path_pkl
-
+        try:
+            output = subprocess.check_output(
+                f"gcloud storage ls {dataset_path_pkl}".split()
+            ).decode('utf-8')
+            dataset_path = '' if len(output) == 0 else dataset_path_pkl
+        except subprocess.CalledProcessError:
+            dataset_path = ''
         return checkpoint_path, dataset_path
 
     latest_checkpoint, latest_dataset_state_path = get_latest_checkpoint()
