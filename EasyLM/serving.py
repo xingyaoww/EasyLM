@@ -26,6 +26,7 @@ class InferenceRequest(BaseModel):
     text: Optional[List[str]] = None
     until: Optional[Union[List[str], List[List[str]]]] = None
     temperature: Optional[float] = None
+    max_new_tokens: Optional[int] = None
 
 
 class ChatRequest(BaseModel):
@@ -83,7 +84,7 @@ class LMServer(object):
         raise NotImplementedError()
 
     @staticmethod
-    def generate(text, temperature):
+    def generate(text, temperature, max_new_tokens=None):
         raise NotImplementedError()
 
     @staticmethod
@@ -223,6 +224,7 @@ class LMServer(object):
                 batch_output_text = self.generate(
                     batch_prefix_text,
                     temperature=data.temperature,
+                    max_new_tokens=data.max_new_tokens,
                 )
                 output_text.extend(self.to_list(batch_output_text)[:batch_size])
 

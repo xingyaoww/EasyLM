@@ -115,10 +115,22 @@ def main(argv):
         in_shardings=(model_ps, PS(), PS(), PS()),
         out_shardings=(PS(), PS())
     )
-    def forward_generate(params, rng, batch, temperature):
+    def forward_generate(
+        params,
+        rng,
+        batch,
+        temperature,
+        max_new_tokens=None,
+    ):
         batch = with_sharding_constraint(batch, PS(('dp', 'fsdp')))
         rng_generator = JaxRNG(rng)
         input_length = batch['input_tokens'].shape[1]
+        if max_new_tokens is None:
+            max_new_tokens = FLAGS.seq_length - input_length
+        else:
+            max_new_tokens = min(
+                max_new_tokens, FLAGS.seq_length - input_length
+            )
         output = hf_model.generate(
             batch['input_tokens'],
             attention_mask=batch['attention_mask'],
@@ -128,7 +140,7 @@ def main(argv):
                 [FlaxTemperatureLogitsWarper(temperature)]
             ),
             generation_config=GenerationConfig(
-                max_new_tokens=FLAGS.seq_length - input_length,
+                max_new_tokens=max_new_tokens,
                 pad_token_id=tokenizer.eos_token_id,
                 bos_token_id=tokenizer.bos_token_id,
                 eos_token_id=tokenizer.eos_token_id,
@@ -293,7 +305,7 @@ def main(argv):
             return total_loglikelihood, total_is_greedy
 
         @staticmethod
-        def generate(text, temperature):
+        def generate(text, temperature, max_new_tokens=None):
             nonlocal sharded_rng
             inputs = prefix_tokenizer(
                 text,
@@ -314,7 +326,9 @@ def main(argv):
             )
             with mesh:
                 output, sharded_rng = forward_generate(
-                    params, sharded_rng, batch, temperature
+                    params, sharded_rng,
+                    batch, temperature,
+                    max_new_tokens
                 )
                 output = jax.device_get(output)
             output_text = []
